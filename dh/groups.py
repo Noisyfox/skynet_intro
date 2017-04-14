@@ -139,7 +139,7 @@ _default_group = 17
 
 def get_group(group=_default_group):
     if group not in _groups.keys():
-        print("Prime group %d not available, using default group." % group)
+        print("Prime group %d unavailable, using default group." % group)
         group = _default_group
 
     return _groups[group]
