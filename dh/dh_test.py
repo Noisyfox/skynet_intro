@@ -9,9 +9,9 @@ class DHTestCase(unittest.TestCase):
             bob_pub, bob_priv = create_dh_key()
 
             alice_sec = calculate_dh_secret(bob_pub, alice_priv)
-            bob_priv = calculate_dh_secret(alice_pub, bob_priv)
+            bob_sec = calculate_dh_secret(alice_pub, bob_priv)
 
-            self.assertEqual(alice_sec, bob_priv)
+            self.assertEqual(alice_sec, bob_sec)
 
 
 if __name__ == '__main__':
