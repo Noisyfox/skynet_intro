@@ -37,6 +37,13 @@ class StealthConn(object):
             # The first 256 bit from shared hash is the key of hmac
             self.hmac = HMAC.new(shared_hash[:32], digestmod=SHA256)
 
+            # TODO: exchange iv
+            # TODO: use a global bloom filter to avoid iv re-use in a reasonable time period,
+            # and we can add a time stamp after iv to avoid replay if the iv filter is reset
+
+            # The last 256 bit from shared hash is the key of hmac
+            cipher_key = shared_hash[:-32]
+            # TODO: init cipher with aes-cfb using cipher_key and iv
             # Default XOR algorithm can only take a key of length 32
             self.cipher = XOR.new(shared_hash[:4])
 
