@@ -34,32 +34,41 @@ class StealthConn(object):
             shared_hash = calculate_dh_secret(their_public_key, my_private_key, key_len=64)
             print("Shared session key: {}".format(binascii.hexlify(shared_hash)))
 
-        # The first 256 bit from shared hash is the key of hmac
-        self.hmac = HMAC.new(shared_hash[:32], digestmod=SHA256)
+            # The first 256 bit from shared hash is the key of hmac
+            self.hmac = HMAC.new(shared_hash[:32], digestmod=SHA256)
 
-        # Default XOR algorithm can only take a key of length 32
-        self.cipher = XOR.new(shared_hash[:4])
+            # Default XOR algorithm can only take a key of length 32
+            self.cipher = XOR.new(shared_hash[:4])
 
     def send(self, data):
         if self.cipher:
-            cipher_text = self.cipher.encrypt(data)
-            # generate tag
-            hmac_s = self.hmac.copy()
-            hmac_s.update(cipher_text)
-            tag = hmac_s.digest()[:self.tag_size]
-            # append tag at the tail of the cipher text
-            encrypted_data = cipher_text + tag
+            pre_auth_text = self.cipher.encrypt(data)
             if self.verbose:
                 print("Original data: {}".format(data))
-                print("Encrypted data: {}".format(repr(encrypted_data)))
-                print("Sending packet of length {}".format(len(encrypted_data)))
+                print("Encrypted data: {}".format(repr(pre_auth_text)))
         else:
-            encrypted_data = data
+            pre_auth_text = data
+
+        if self.hmac:
+            # generate tag
+            hmac_s = self.hmac.copy()
+            hmac_s.update(pre_auth_text)
+            tag = hmac_s.digest()[:self.tag_size]
+            if self.verbose:
+                print("Data tag: {}".format(repr(tag)))
+
+            # append tag at the tail of the cipher text
+            authed_text = pre_auth_text + tag
+        else:
+            authed_text = pre_auth_text
+
+        if self.verbose:
+            print("Sending packet of length {}".format(len(authed_text)))
 
         # Encode the data's length into an unsigned two byte int ('H')
-        pkt_len = struct.pack('H', len(encrypted_data))
+        pkt_len = struct.pack('H', len(authed_text))
         self.conn.sendall(pkt_len)
-        self.conn.sendall(encrypted_data)
+        self.conn.sendall(authed_text)
 
     def recv(self):
         # Decode the data's length from an unsigned two byte int ('H')
@@ -68,38 +77,48 @@ class StealthConn(object):
         pkt_len = unpacked_contents[0]
 
         received_size = 0
-        encrypted_data = b''
+        authed_data = b''
         while received_size < pkt_len:
             r = self.conn.recv(pkt_len - received_size)
             received_size += len(r)
-            encrypted_data += r
+            authed_data += r
 
-        if self.cipher:
+        if self.verbose:
+            print("Receiving packet of length {}".format(pkt_len))
 
+        if self.hmac:
             # check tag
             if pkt_len < self.tag_size:
-                self.error()
+                self.auth_error()
 
-            tag = encrypted_data[-self.tag_size:]
-            cipher_text = encrypted_data[:pkt_len - self.tag_size]
+            tag = authed_data[-self.tag_size:]
+            if self.verbose:
+                print("Received data tag {}".format(repr(tag)))
+
+            cipher_text = authed_data[:pkt_len - self.tag_size]
             hmac_s = self.hmac.copy()
             hmac_s.update(cipher_text)
             tag_calc = hmac_s.digest()[:self.tag_size]
-            if tag != tag_calc:
-                self.error()
+            if self.verbose:
+                print("Calculated data tag {}".format(repr(tag_calc)))
 
+            if tag != tag_calc:
+                self.auth_error()
+        else:
+            cipher_text = authed_data
+
+        if self.cipher:
             # decrypt data
             data = self.cipher.decrypt(cipher_text)
             if self.verbose:
-                print("Receiving packet of length {}".format(pkt_len))
-                print("Encrypted data: {}".format(repr(encrypted_data)))
+                print("Encrypted data: {}".format(repr(cipher_text)))
                 print("Original data: {}".format(data))
         else:
-            data = encrypted_data
+            data = cipher_text
 
         return data
 
-    def error(self):
+    def auth_error(self):
         raise Exception("Auth check failed!")
 
     def close(self):
