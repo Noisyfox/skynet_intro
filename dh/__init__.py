@@ -1,4 +1,5 @@
-from Crypto.Hash import SHA256
+from Crypto.Hash import SHA256, HMAC
+from Crypto.Protocol import KDF
 from Crypto.Random import random
 
 from dh.groups import get_group
@@ -29,7 +30,8 @@ def _check_public_key(public_key):
     return False
 
 
-def calculate_dh_secret(their_public, my_private):
+# derivate key from dh secret
+def calculate_dh_secret(their_public, my_private, key_len=32):
     # Check if other party's public key is valid
     if not _check_public_key(their_public):
         raise Exception("Invalid public key! Danger!")
@@ -43,5 +45,9 @@ def calculate_dh_secret(their_public, my_private):
     # (b) We can convert to raw bytes easily
     # (c) We could add additional information if we wanted
     # Feel free to change SHA256 to a different value if more appropriate
-    shared_hash = SHA256.new(bytes(str(shared_secret), "ascii")).hexdigest()
+
+    # shared_hash = SHA256.new(bytes(str(shared_secret), "ascii")).hexdigest()
+    shared_hash = KDF.PBKDF2(shared_secret.to_bytes((shared_secret.bit_length() + 7) // 8, byteorder='little'),
+                             b"team.football", key_len, prf=lambda p, s: HMAC.new(p, s, SHA256).digest())
+
     return shared_hash
