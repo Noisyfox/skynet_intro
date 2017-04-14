@@ -2,17 +2,22 @@ import struct
 import binascii
 
 from Crypto.Cipher import XOR
+from Crypto.Hash import HMAC, SHA256
 
 from dh import create_dh_key, calculate_dh_secret
+
 
 class StealthConn(object):
     def __init__(self, conn, client=False, server=False, verbose=False):
         self.conn = conn
         self.cipher = None
+        self.hmac = None
         self.client = client
         self.server = server
         self.verbose = verbose
         self.initiate_session()
+
+        self.tag_size = 16
 
     def initiate_session(self):
         # Perform the initial connection handshake for agreeing on a shared secret 
@@ -26,15 +31,24 @@ class StealthConn(object):
             # Receive their public key
             their_public_key = int(self.recv())
             # Obtain our shared secret
-            shared_hash = calculate_dh_secret(their_public_key, my_private_key)
+            shared_hash = calculate_dh_secret(their_public_key, my_private_key, key_len=64)
             print("Shared session key: {}".format(binascii.hexlify(shared_hash)))
+
+        # The first 256 bit from shared hash is the key of hmac
+        self.hmac = HMAC.new(shared_hash[:32], digestmod=SHA256)
 
         # Default XOR algorithm can only take a key of length 32
         self.cipher = XOR.new(shared_hash[:4])
 
     def send(self, data):
         if self.cipher:
-            encrypted_data = self.cipher.encrypt(data)
+            cipher_text = self.cipher.encrypt(data)
+            # generate tag
+            hmac_s = self.hmac.copy()
+            hmac_s.update(cipher_text)
+            tag = hmac_s.digest()[:self.tag_size]
+            # append tag at the tail of the cipher text
+            encrypted_data = cipher_text + tag
             if self.verbose:
                 print("Original data: {}".format(data))
                 print("Encrypted data: {}".format(repr(encrypted_data)))
@@ -61,7 +75,21 @@ class StealthConn(object):
             encrypted_data += r
 
         if self.cipher:
-            data = self.cipher.decrypt(encrypted_data)
+
+            # check tag
+            if pkt_len < self.tag_size:
+                self.error()
+
+            tag = encrypted_data[-self.tag_size:]
+            cipher_text = encrypted_data[:pkt_len - self.tag_size]
+            hmac_s = self.hmac.copy()
+            hmac_s.update(cipher_text)
+            tag_calc = hmac_s.digest()[:self.tag_size]
+            if tag != tag_calc:
+                self.error()
+
+            # decrypt data
+            data = self.cipher.decrypt(cipher_text)
             if self.verbose:
                 print("Receiving packet of length {}".format(pkt_len))
                 print("Encrypted data: {}".format(repr(encrypted_data)))
@@ -70,6 +98,9 @@ class StealthConn(object):
             data = encrypted_data
 
         return data
+
+    def error(self):
+        raise Exception("Auth check failed!")
 
     def close(self):
         self.conn.close()
