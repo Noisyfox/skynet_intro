@@ -53,7 +53,13 @@ class StealthConn(object):
         unpacked_contents = struct.unpack('H', pkt_len_packed)
         pkt_len = unpacked_contents[0]
 
-        encrypted_data = self.conn.recv(pkt_len)
+        received_size = 0
+        encrypted_data = b''
+        while received_size < pkt_len:
+            r = self.conn.recv(pkt_len - received_size)
+            received_size += len(r)
+            encrypted_data += r
+
         if self.cipher:
             data = self.cipher.decrypt(encrypted_data)
             if self.verbose:
