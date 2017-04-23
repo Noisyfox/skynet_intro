@@ -3,12 +3,24 @@ import binascii
 
 from Crypto.Cipher import XOR
 from Crypto.Hash import HMAC, SHA256
+from Crypto.Protocol import KDF
+from Crypto.Random import random
 
 from dh import create_dh_key, calculate_dh_secret
 
 
 class StealthConn(object):
+    random_size = 32  # bytes
+    key_hmac_size = 32
+    key_cipher_size = 32
+    iv_size = 32
+    key_block_size = key_hmac_size + key_cipher_size + iv_size
+    tag_size = 16
+
     def __init__(self, conn, client=False, server=False, verbose=False):
+        if client == server:
+            raise Exception("Exo me? You can't be either nor neither of client / server.")
+
         self.conn = conn
         self.cipher = None
         self.hmac = None
@@ -17,35 +29,52 @@ class StealthConn(object):
         self.verbose = verbose
         self.initiate_session()
 
-        self.tag_size = 16
-
     def initiate_session(self):
-        # Perform the initial connection handshake for agreeing on a shared secret 
+        # Perform the initial connection handshake for agreeing on a shared secret
 
-        ### TODO: Your code here!
-        # This can be broken into code run just on the server or just on the client
-        if self.server or self.client:
-            my_public_key, my_private_key = create_dh_key()
-            # Send them our public key
-            self.send(bytes(str(my_public_key), "ascii"))
-            # Receive their public key
-            their_public_key = int(self.recv())
-            # Obtain our shared secret
-            shared_hash = calculate_dh_secret(their_public_key, my_private_key, key_len=64)
-            print("Shared session key: {}".format(binascii.hexlify(shared_hash)))
+        # get server and client random
+        self_random = random.getrandbits(StealthConn.random_size * 8).to_bytes(StealthConn.random_size,
+                                                                               byteorder='little')
+        self.send(self_random)
+        other_random = self.recv()
+        if len(other_random) != self.random_size:
+            raise Exception('Random size error!')
 
-            # The first 256 bit from shared hash is the key of hmac
-            self.hmac = HMAC.new(shared_hash[:32], digestmod=SHA256)
+        if self.client:
+            server_random = other_random
+            client_random = self_random
+        else:
+            server_random = self_random
+            client_random = other_random
 
-            # TODO: exchange iv
-            # TODO: use a global bloom filter to avoid iv re-use in a reasonable time period,
-            # and we can add a time stamp after iv to avoid replay if the iv filter is reset
+        # Exchange master_secret via DHE
+        my_public_key, my_private_key = create_dh_key()
+        # Send them our public key
+        self.send(bytes(str(my_public_key), "ascii"))
+        # Receive their public key
+        their_public_key = int(self.recv())
+        # Obtain our shared secret
+        master_secret = calculate_dh_secret(their_public_key, my_private_key)
+        print("Shared master secret: {}".format(binascii.hexlify(master_secret)))
 
-            # The last 256 bit from shared hash is the key of hmac
-            cipher_key = shared_hash[:-32]
-            # TODO: init cipher with aes-cfb using cipher_key and iv
-            # Default XOR algorithm can only take a key of length 32
-            self.cipher = XOR.new(shared_hash[:4])
+        # derivate hmac key, encrypt key and iv from server_random, client_random and master_secret
+        key_block = KDF.PBKDF2(master_secret + server_random + client_random, b"team.football",
+                               StealthConn.key_block_size, prf=lambda p, s: HMAC.new(p, s, SHA256).digest())
+
+        print("key_block: {}".format(binascii.hexlify(key_block)))
+
+        # The first key_hmac_size bytes from key_block is the key of hmac
+        self.hmac = HMAC.new(key_block[:StealthConn.key_hmac_size], digestmod=SHA256)
+
+        # Next key_cipher_size bytes from key_block is the key of cipher
+        cipher_key = key_block[StealthConn.key_hmac_size:StealthConn.key_hmac_size + StealthConn.key_cipher_size]
+
+        # Next iv_size bytes from key_block is the IV of cipher
+        iv = key_block[:-StealthConn.iv_size]
+
+        # TODO: init cipher with aes-cfb using cipher_key and iv
+        # Default XOR algorithm can only take a key of length 32
+        self.cipher = XOR.new(cipher_key[:4])
 
     def send(self, data):
         if self.cipher:
