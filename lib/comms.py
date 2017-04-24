@@ -9,12 +9,45 @@ from Crypto.Random import random
 from dh import create_dh_key, calculate_dh_secret
 
 
-class StealthConn(object):
-    random_size = 32  # bytes
-    key_hmac_size = 32
+class KeyBlock(object):
+    key_hmac_size = 32  # bytes
     key_cipher_size = 32
     iv_size = 32
-    key_block_size = key_hmac_size + key_cipher_size + iv_size
+    key_block_size = key_hmac_size * 2 + key_cipher_size * 2 + iv_size * 2
+
+    def __init__(self, key_block_bytes):
+        if len(key_block_bytes) < KeyBlock.key_block_size:
+            raise Exception('Not enough bytes for key block!')
+
+        def split(_len, a):
+            return a[:_len], a[_len:]
+
+        b = key_block_bytes
+
+        self.client_write_MAC_secret, b = split(KeyBlock.key_hmac_size, b)
+        self.server_write_MAC_secret, b = split(KeyBlock.key_hmac_size, b)
+        self.client_write_key, b = split(KeyBlock.key_cipher_size, b)
+        self.server_write_key, b = split(KeyBlock.key_cipher_size, b)
+        self.client_write_IV, b = split(KeyBlock.iv_size, b)
+        self.server_write_IV, b = split(KeyBlock.iv_size, b)
+
+    def __str__(self) -> str:
+        return 'client_write_MAC_secret:%s\n' \
+               'server_write_MAC_secret:%s\n' \
+               'client_write_key:%s\n' \
+               'server_write_key:%s\n' \
+               'client_write_IV:%s\n' \
+               'server_write_IV:%s' % (
+                   binascii.hexlify(self.client_write_MAC_secret),
+                   binascii.hexlify(self.server_write_MAC_secret),
+                   binascii.hexlify(self.client_write_key),
+                   binascii.hexlify(self.server_write_key),
+                   binascii.hexlify(self.client_write_IV),
+                   binascii.hexlify(self.server_write_IV),)
+
+
+class StealthConn(object):
+    random_size = 32  # bytes
     tag_size = 16
 
     def __init__(self, conn, client=False, server=False, verbose=False):
@@ -22,8 +55,10 @@ class StealthConn(object):
             raise Exception("Exo me? You can't be either nor neither of client / server.")
 
         self.conn = conn
-        self.cipher = None
-        self.hmac = None
+        self.hmac_send = None
+        self.hmac_recv = None
+        self.cipher_send = None
+        self.cipher_recv = None
         self.client = client
         self.server = server
         self.verbose = verbose
@@ -58,36 +93,40 @@ class StealthConn(object):
         print("Shared master secret: {}".format(binascii.hexlify(master_secret)))
 
         # derivate hmac key, encrypt key and iv from server_random, client_random and master_secret
-        key_block = KDF.PBKDF2(master_secret + server_random + client_random, b"team.football",
-                               StealthConn.key_block_size, prf=lambda p, s: HMAC.new(p, s, SHA256).digest())
+        key_block_bytes = KDF.PBKDF2(master_secret + server_random + client_random, b"team.football",
+                                     KeyBlock.key_block_size, prf=lambda p, s: HMAC.new(p, s, SHA256).digest())
 
-        print("key_block: {}".format(binascii.hexlify(key_block)))
+        print("key_block_bytes: {}".format(binascii.hexlify(key_block_bytes)))
 
-        # The first key_hmac_size bytes from key_block is the key of hmac
-        self.hmac = HMAC.new(key_block[:StealthConn.key_hmac_size], digestmod=SHA256)
+        key_block = KeyBlock(key_block_bytes)
 
-        # Next key_cipher_size bytes from key_block is the key of cipher
-        cipher_key = key_block[StealthConn.key_hmac_size:StealthConn.key_hmac_size + StealthConn.key_cipher_size]
+        print("key_block:\n{}".format(key_block))
 
-        # Next iv_size bytes from key_block is the IV of cipher
-        iv = key_block[:-StealthConn.iv_size]
-
-        # TODO: init cipher with aes-cfb using cipher_key and iv
-        # Default XOR algorithm can only take a key of length 32
-        self.cipher = XOR.new(cipher_key[:4])
+        if self.client:
+            self.hmac_recv = HMAC.new(key_block.server_write_MAC_secret, digestmod=SHA256)
+            self.hmac_send = HMAC.new(key_block.client_write_MAC_secret, digestmod=SHA256)
+            # TODO: init cipher with aes-cfb using cipher_key and iv
+            self.cipher_recv = XOR.new(key_block.server_write_key[:4])
+            self.cipher_send = XOR.new(key_block.client_write_key[:4])
+        else:
+            self.hmac_recv = HMAC.new(key_block.client_write_MAC_secret, digestmod=SHA256)
+            self.hmac_send = HMAC.new(key_block.server_write_MAC_secret, digestmod=SHA256)
+            # TODO: init cipher with aes-cfb using cipher_key and iv
+            self.cipher_recv = XOR.new(key_block.client_write_key[:4])
+            self.cipher_send = XOR.new(key_block.server_write_key[:4])
 
     def send(self, data):
-        if self.cipher:
-            pre_auth_text = self.cipher.encrypt(data)
+        if self.cipher_send:
+            pre_auth_text = self.cipher_send.encrypt(data)
             if self.verbose:
                 print("Original data: {}".format(data))
                 print("Encrypted data: {}".format(repr(pre_auth_text)))
         else:
             pre_auth_text = data
 
-        if self.hmac:
+        if self.hmac_send:
             # generate tag
-            hmac_s = self.hmac.copy()
+            hmac_s = self.hmac_send.copy()
             hmac_s.update(pre_auth_text)
             tag = hmac_s.digest()[:self.tag_size]
             if self.verbose:
@@ -122,7 +161,7 @@ class StealthConn(object):
         if self.verbose:
             print("Receiving packet of length {}".format(pkt_len))
 
-        if self.hmac:
+        if self.hmac_recv:
             # check tag
             if pkt_len < self.tag_size:
                 self.auth_error()
@@ -132,7 +171,7 @@ class StealthConn(object):
                 print("Received data tag {}".format(repr(tag)))
 
             cipher_text = authed_data[:pkt_len - self.tag_size]
-            hmac_s = self.hmac.copy()
+            hmac_s = self.hmac_recv.copy()
             hmac_s.update(cipher_text)
             tag_calc = hmac_s.digest()[:self.tag_size]
             if self.verbose:
@@ -143,9 +182,9 @@ class StealthConn(object):
         else:
             cipher_text = authed_data
 
-        if self.cipher:
+        if self.cipher_recv:
             # decrypt data
-            data = self.cipher.decrypt(cipher_text)
+            data = self.cipher_recv.decrypt(cipher_text)
             if self.verbose:
                 print("Encrypted data: {}".format(repr(cipher_text)))
                 print("Original data: {}".format(data))
