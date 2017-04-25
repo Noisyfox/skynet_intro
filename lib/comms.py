@@ -9,6 +9,7 @@ from Crypto.Random import random
 from dh import create_dh_key, calculate_dh_secret
 
 
+# Split the derived key derived by PBKDF2
 class KeyBlock(object):
     key_hmac_size = 32  # bytes
     key_cipher_size = 32  # for AES256
@@ -82,7 +83,7 @@ class StealthConn(object):
             server_random = self_random
             client_random = other_random
 
-        # Exchange master_secret via DHE
+        # Exchange master_secret via Diffie-Hellman key exchange
         my_public_key, my_private_key = create_dh_key()
         # Send them our public key
         self.send(bytes(str(my_public_key), "ascii"))
@@ -92,7 +93,8 @@ class StealthConn(object):
         master_secret = calculate_dh_secret(their_public_key, my_private_key)
         print("Shared master secret: {}".format(binascii.hexlify(master_secret)))
 
-        # derivate hmac key, encrypt key and iv from server_random, client_random and master_secret
+        # Derive hmac key, encrypt key and iv from server_random, client_random and master_secret using PBKDF2
+        # Refer to RFC2898
         key_block_bytes = KDF.PBKDF2(master_secret + server_random + client_random, b"team.football",
                                      KeyBlock.key_block_size, prf=lambda p, s: HMAC.new(p, s, SHA256).digest())
 

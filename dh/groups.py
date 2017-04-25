@@ -1,8 +1,7 @@
 from lib.helpers import read_hex
 
 
-# Diffie-Hellman groups from RFC3526
-
+# Create a dictionary for Diffie-Hellman groups from RFC3526
 _groups = {
     5: (read_hex("""FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1
 29024E08 8A67CC74 020BBEA6 3B139B22 514A0879 8E3404DD
@@ -134,9 +133,11 @@ B1D510BD 7EE74D73 FAF36BC3 1ECFA268 359046F4 EB879F92
 60C980DD 98EDD3DF FFFFFFFF FFFFFFFF"""), 2)
 }
 
+# For AES with 256 key len, Group 17 is chosen to be default group
 _default_group = 17
 
 
+# Return the specified Diffie-Hellman groups
 def get_group(group=_default_group):
     if group not in _groups.keys():
         print("Prime group %d unavailable, using default group." % group)

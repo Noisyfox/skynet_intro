@@ -4,9 +4,9 @@ from Crypto.Random import random
 
 from dh.groups import get_group
 
-# use default group 17 with 6144 bit prime
+# Use default group 17 with 6144 bit prime
 prime, generator = get_group()
-# for AES with 256 key len, we need exponent with len around 540
+# For group 17, exponent with len 540 should be used
 exponent_len = 540
 
 
@@ -30,7 +30,7 @@ def _check_public_key(public_key):
     return False
 
 
-# derivate master_secret from dh secret
+# Derive master_secret from dh secret
 def calculate_dh_secret(their_public, my_private):
     # Check if other party's public key is valid
     if not _check_public_key(their_public):
