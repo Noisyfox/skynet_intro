@@ -1,7 +1,7 @@
 import struct
 import binascii
 
-from Crypto.Cipher import XOR
+from Crypto.Cipher import XOR, AES
 from Crypto.Hash import HMAC, SHA256
 from Crypto.Protocol import KDF
 from Crypto.Random import random
@@ -50,6 +50,7 @@ class KeyBlock(object):
 class StealthConn(object):
     random_size = 32  # bytes
     tag_size = 16
+    block_size = 16
 
     def __init__(self, conn, client=False, server=False, verbose=False):
         if client == server:
@@ -108,17 +109,20 @@ class StealthConn(object):
             self.hmac_recv = HMAC.new(key_block.server_write_MAC_secret, digestmod=SHA256)
             self.hmac_send = HMAC.new(key_block.client_write_MAC_secret, digestmod=SHA256)
             # TODO: init cipher with aes-cfb using cipher_key and iv
-            self.cipher_recv = XOR.new(key_block.server_write_key[:4])
-            self.cipher_send = XOR.new(key_block.client_write_key[:4])
+            self.cipher_recv = AES.new(key_block.server_write_key, AES.MODE_CBC, key_block.server_write_IV)
+            self.cipher_send = AES.new(key_block.client_write_key, AES.MODE_CBC, key_block.client_write_IV)
         else:
             self.hmac_recv = HMAC.new(key_block.client_write_MAC_secret, digestmod=SHA256)
             self.hmac_send = HMAC.new(key_block.server_write_MAC_secret, digestmod=SHA256)
             # TODO: init cipher with aes-cfb using cipher_key and iv
-            self.cipher_recv = XOR.new(key_block.client_write_key[:4])
-            self.cipher_send = XOR.new(key_block.server_write_key[:4])
+            self.cipher_recv = AES.new(key_block.client_write_key, AES.MODE_CBC, key_block.client_write_IV)
+            self.cipher_send = AES.new(key_block.server_write_key, AES.MODE_CBC, key_block.server_write_IV)
 
     def send(self, data):
         if self.cipher_send:
+            data = data.decode("ascii")
+            pad_data = self.pad(data)
+            data = bytes(pad_data, "ascii")
             pre_auth_text = self.cipher_send.encrypt(data)
             if self.verbose:
                 print("Original data: {}".format(data))
@@ -127,7 +131,7 @@ class StealthConn(object):
             pre_auth_text = data
 
         if self.hmac_send:
-            # generate tag
+            # generate tag for the cipher text
             hmac_s = self.hmac_send.copy()
             hmac_s.update(pre_auth_text)
             tag = hmac_s.digest()[:self.tag_size]
@@ -186,7 +190,8 @@ class StealthConn(object):
 
         if self.cipher_recv:
             # decrypt data
-            data = self.cipher_recv.decrypt(cipher_text)
+            pad_data = self.cipher_recv.decrypt(cipher_text)
+            data = self.unpad(pad_data)
             if self.verbose:
                 print("Encrypted data: {}".format(repr(cipher_text)))
                 print("Original data: {}".format(data))
@@ -194,6 +199,14 @@ class StealthConn(object):
             data = cipher_text
 
         return data
+
+    # Padding function
+    def pad(self, s):
+        return s + (self.block_size - len(s) % self.block_size) * chr(self.block_size - len(s) % self.block_size)
+
+    # Unpadding function
+    def unpad(self, s):
+        return s[:-ord(s[len(s) - 1:])]
 
     def auth_error(self):
         raise Exception("Auth check failed!")
