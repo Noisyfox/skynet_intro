@@ -143,9 +143,7 @@ class StealthConn(object):
 
     def send(self, data):
         if self.cipher_send:
-            data = data.decode("ascii")
-            pad_data = self.pad(data)
-            data = bytes(pad_data, "ascii")
+            data = self.pad(data)
             pre_auth_text = self.cipher_send.encrypt(data)
             if self.verbose:
                 print("Original data: {}".format(data))
@@ -220,13 +218,18 @@ class StealthConn(object):
 
         return data
 
-    # Padding function
+    # Padding function, implementing PKCS 7
     def pad(self, s):
-        return s + (self.block_size - len(s) % self.block_size) * chr(self.block_size - len(s) % self.block_size)
+        s_bytearray = bytearray(s)
+        for i in range(1, self.block_size - len(s) % self.block_size + 1):
+            s_bytearray.append(self.block_size - len(s) % self.block_size)
+
+        s = bytes(s_bytearray)
+        return s
 
     # Unpadding function
     def unpad(self, s):
-        return s[:-ord(s[len(s) - 1:])]
+        return s[:-int(s[len(s) - 1])]
 
     def auth_error(self):
         raise Exception("Auth check failed!")
