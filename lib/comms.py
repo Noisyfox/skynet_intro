@@ -218,7 +218,7 @@ class StealthConn(object):
 
         return data
 
-    # Padding function, implementing PKCS 7
+    # Padding function, implementing PKCS#7
     def pad(self, s):
         s_bytearray = bytearray(s)
         for i in range(1, self.block_size - len(s) % self.block_size + 1):
