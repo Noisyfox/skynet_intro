@@ -50,7 +50,7 @@ class KeyBlock(object):
 # The tag is generated using;
 #
 # mac_data = num_to_4_le_bytes(frame_counter)
-# mac_data |= cipher_text
+# mac_data += cipher_text
 # tag = HMAC_SHA256(mac_data, secret)
 # frame_counter += 1
 #
@@ -133,13 +133,11 @@ class StealthConn(object):
         if self.client:
             self.hmac_recv = HMACWithFrameCounter(key_block.server_write_MAC_secret)
             self.hmac_send = HMACWithFrameCounter(key_block.client_write_MAC_secret)
-            # TODO: init cipher with aes-cfb using cipher_key and iv
             self.cipher_recv = AES.new(key_block.server_write_key, AES.MODE_CBC, key_block.server_write_IV)
             self.cipher_send = AES.new(key_block.client_write_key, AES.MODE_CBC, key_block.client_write_IV)
         else:
             self.hmac_recv = HMACWithFrameCounter(key_block.client_write_MAC_secret)
             self.hmac_send = HMACWithFrameCounter(key_block.server_write_MAC_secret)
-            # TODO: init cipher with aes-cfb using cipher_key and iv
             self.cipher_recv = AES.new(key_block.client_write_key, AES.MODE_CBC, key_block.client_write_IV)
             self.cipher_send = AES.new(key_block.server_write_key, AES.MODE_CBC, key_block.server_write_IV)
 
