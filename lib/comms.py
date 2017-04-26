@@ -47,6 +47,31 @@ class KeyBlock(object):
                    binascii.hexlify(self.server_write_IV),)
 
 
+# The tag is generated using;
+#
+# mac_data = num_to_4_le_bytes(frame_counter)
+# mac_data |= cipher_text
+# tag = HMAC_SHA256(mac_data, secret)
+# frame_counter += 1
+#
+# With frame_counter, we could detect frame reorder, drop or replay attack within the same connection.
+# (eg. the same cipher_text will have different tag within the same connection)
+class HMACWithFrameCounter(object):
+    tag_size = 16
+
+    def __init__(self, secret: bytes):
+        self.hmac = HMAC.new(secret, digestmod=SHA256)
+        self.counter = 1
+
+    def calculate_tag(self, frame: bytes) -> bytes:
+        _hmac = self.hmac.copy()
+        _hmac.update(self.counter.to_bytes(4, byteorder='little'))
+        self.counter += 1
+        _hmac.update(frame)
+
+        return _hmac.digest()[:self.tag_size]
+
+
 class StealthConn(object):
     random_size = 32  # bytes
     tag_size = 16
@@ -106,14 +131,14 @@ class StealthConn(object):
         print("key_block:\n{}".format(key_block))
 
         if self.client:
-            self.hmac_recv = HMAC.new(key_block.server_write_MAC_secret, digestmod=SHA256)
-            self.hmac_send = HMAC.new(key_block.client_write_MAC_secret, digestmod=SHA256)
+            self.hmac_recv = HMACWithFrameCounter(key_block.server_write_MAC_secret)
+            self.hmac_send = HMACWithFrameCounter(key_block.client_write_MAC_secret)
             # TODO: init cipher with aes-cfb using cipher_key and iv
             self.cipher_recv = AES.new(key_block.server_write_key, AES.MODE_CBC, key_block.server_write_IV)
             self.cipher_send = AES.new(key_block.client_write_key, AES.MODE_CBC, key_block.client_write_IV)
         else:
-            self.hmac_recv = HMAC.new(key_block.client_write_MAC_secret, digestmod=SHA256)
-            self.hmac_send = HMAC.new(key_block.server_write_MAC_secret, digestmod=SHA256)
+            self.hmac_recv = HMACWithFrameCounter(key_block.client_write_MAC_secret)
+            self.hmac_send = HMACWithFrameCounter(key_block.server_write_MAC_secret)
             # TODO: init cipher with aes-cfb using cipher_key and iv
             self.cipher_recv = AES.new(key_block.client_write_key, AES.MODE_CBC, key_block.client_write_IV)
             self.cipher_send = AES.new(key_block.server_write_key, AES.MODE_CBC, key_block.server_write_IV)
@@ -132,9 +157,8 @@ class StealthConn(object):
 
         if self.hmac_send:
             # generate tag for the cipher text
-            hmac_s = self.hmac_send.copy()
-            hmac_s.update(pre_auth_text)
-            tag = hmac_s.digest()[:self.tag_size]
+            tag = self.hmac_send.calculate_tag(pre_auth_text)
+
             if self.verbose:
                 print("Data tag: {}".format(repr(tag)))
 
@@ -169,17 +193,15 @@ class StealthConn(object):
 
         if self.hmac_recv:
             # check tag
-            if pkt_len < self.tag_size:
+            if pkt_len < HMACWithFrameCounter.tag_size:
                 self.auth_error()
 
-            tag = authed_data[-self.tag_size:]
+            tag = authed_data[-HMACWithFrameCounter.tag_size:]
             if self.verbose:
                 print("Received data tag {}".format(repr(tag)))
 
-            cipher_text = authed_data[:pkt_len - self.tag_size]
-            hmac_s = self.hmac_recv.copy()
-            hmac_s.update(cipher_text)
-            tag_calc = hmac_s.digest()[:self.tag_size]
+            cipher_text = authed_data[:pkt_len - HMACWithFrameCounter.tag_size]
+            tag_calc = self.hmac_recv.calculate_tag(cipher_text)
             if self.verbose:
                 print("Calculated data tag {}".format(repr(tag_calc)))
 
