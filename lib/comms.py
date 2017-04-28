@@ -13,7 +13,7 @@ from dh import create_dh_key, calculate_dh_secret
 class KeyBlock(object):
     key_hmac_size = 32  # bytes
     key_cipher_size = 32  # for AES256
-    iv_size = 16  # for AES CBC or CFB mode which iv size = block size = 16 bytes
+    iv_size = 16  # for AES CBC mode which iv size = block size = 16 bytes
     key_block_size = key_hmac_size * 2 + key_cipher_size * 2 + iv_size * 2
 
     def __init__(self, key_block_bytes):
@@ -57,7 +57,7 @@ class KeyBlock(object):
 # With frame_counter, we could detect frame reorder, drop or replay attack within the same connection.
 # (eg. the same cipher_text will have different tag within the same connection)
 class HMACWithFrameCounter(object):
-    tag_size = 16
+    tag_size = 32
 
     def __init__(self, secret: bytes):
         self.hmac = HMAC.new(secret, digestmod=SHA256)
