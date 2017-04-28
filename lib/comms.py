@@ -29,8 +29,8 @@ class PRNG_AES(object):
         return self.PRNG.pseudo_random_data(bytes_count)
 
     def reseed(self):
-        # next_key = SHA256(current_key + seed)
-        # so we could use the same seed to reseed multiple times
+        # Derive next seed by SHA256(prev_seed)
+        self.seed = SHA256.new(self.seed).digest()
         self.PRNG.reseed(self.seed)
 
 
