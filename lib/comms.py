@@ -1,12 +1,37 @@
 import struct
 import binascii
 
-from Crypto.Cipher import XOR, AES
+from Crypto.Cipher import AES
 from Crypto.Hash import HMAC, SHA256
 from Crypto.Protocol import KDF
 from Crypto.Random import random
+from Crypto.Random.Fortuna.FortunaGenerator import AESGenerator
 
 from dh import create_dh_key, calculate_dh_secret
+
+
+class PRNG_AES(object):
+    seed_size = 32
+
+    def __init__(self, secret):
+        self.seed = secret
+        self.counter = None
+        self.bytes_counter = 0
+        self.PRNG = AESGenerator()
+        self.reseed()
+
+    def next(self, bytes_count) -> bytes:
+        self.bytes_counter += bytes_count
+        if self.bytes_counter > self.PRNG.max_bytes_per_request:
+            self.reseed()
+            self.bytes_counter = bytes_count
+
+        return self.PRNG.pseudo_random_data(bytes_count)
+
+    def reseed(self):
+        # next_key = SHA256(current_key + seed)
+        # so we could use the same seed to reseed multiple times
+        self.PRNG.reseed(self.seed)
 
 
 # Split the derived key derived by PBKDF2
@@ -14,7 +39,7 @@ class KeyBlock(object):
     key_hmac_size = 32  # bytes
     key_cipher_size = 32  # for AES256
     iv_size = 16  # for AES CBC mode which iv size = block size = 16 bytes
-    key_block_size = key_hmac_size * 2 + key_cipher_size * 2 + iv_size * 2
+    key_block_size = key_hmac_size * 2 + PRNG_AES.seed_size * 2 + key_cipher_size * 2 + iv_size * 2
 
     def __init__(self, key_block_bytes):
         if len(key_block_bytes) < KeyBlock.key_block_size:
@@ -27,6 +52,8 @@ class KeyBlock(object):
 
         self.client_write_MAC_secret, b = split(KeyBlock.key_hmac_size, b)
         self.server_write_MAC_secret, b = split(KeyBlock.key_hmac_size, b)
+        self.client_write_PRNG_seed, b = split(PRNG_AES.seed_size, b)
+        self.server_write_PRNG_seed, b = split(PRNG_AES.seed_size, b)
         self.client_write_key, b = split(KeyBlock.key_cipher_size, b)
         self.server_write_key, b = split(KeyBlock.key_cipher_size, b)
         self.client_write_IV, b = split(KeyBlock.iv_size, b)
@@ -35,12 +62,16 @@ class KeyBlock(object):
     def __str__(self) -> str:
         return 'client_write_MAC_secret:%s\n' \
                'server_write_MAC_secret:%s\n' \
+               'client_write_PRNG_seed:%s\n' \
+               'server_write_PRNG_seed:%s\n' \
                'client_write_key:%s\n' \
                'server_write_key:%s\n' \
                'client_write_IV:%s\n' \
                'server_write_IV:%s' % (
                    binascii.hexlify(self.client_write_MAC_secret),
                    binascii.hexlify(self.server_write_MAC_secret),
+                   binascii.hexlify(self.client_write_PRNG_seed),
+                   binascii.hexlify(self.server_write_PRNG_seed),
                    binascii.hexlify(self.client_write_key),
                    binascii.hexlify(self.server_write_key),
                    binascii.hexlify(self.client_write_IV),
@@ -58,15 +89,15 @@ class KeyBlock(object):
 # (eg. the same cipher_text will have different tag within the same connection)
 class HMACWithFrameCounter(object):
     tag_size = 32
+    counter_size = 16
 
-    def __init__(self, secret: bytes):
+    def __init__(self, secret: bytes, prng_seed: bytes):
         self.hmac = HMAC.new(secret, digestmod=SHA256)
-        self.counter = 1
+        self.counter = PRNG_AES(prng_seed)
 
     def calculate_tag(self, frame: bytes) -> bytes:
         _hmac = self.hmac.copy()
-        _hmac.update(self.counter.to_bytes(4, byteorder='little'))
-        self.counter += 1
+        _hmac.update(self.counter.next(HMACWithFrameCounter.counter_size))
         _hmac.update(frame)
 
         return _hmac.digest()[:self.tag_size]
@@ -131,13 +162,13 @@ class StealthConn(object):
         print("key_block:\n{}".format(key_block))
 
         if self.client:
-            self.hmac_recv = HMACWithFrameCounter(key_block.server_write_MAC_secret)
-            self.hmac_send = HMACWithFrameCounter(key_block.client_write_MAC_secret)
+            self.hmac_recv = HMACWithFrameCounter(key_block.server_write_MAC_secret, key_block.server_write_PRNG_seed)
+            self.hmac_send = HMACWithFrameCounter(key_block.client_write_MAC_secret, key_block.client_write_PRNG_seed)
             self.cipher_recv = AES.new(key_block.server_write_key, AES.MODE_CBC, key_block.server_write_IV)
             self.cipher_send = AES.new(key_block.client_write_key, AES.MODE_CBC, key_block.client_write_IV)
         else:
-            self.hmac_recv = HMACWithFrameCounter(key_block.client_write_MAC_secret)
-            self.hmac_send = HMACWithFrameCounter(key_block.server_write_MAC_secret)
+            self.hmac_recv = HMACWithFrameCounter(key_block.client_write_MAC_secret, key_block.client_write_PRNG_seed)
+            self.hmac_send = HMACWithFrameCounter(key_block.server_write_MAC_secret, key_block.server_write_PRNG_seed)
             self.cipher_recv = AES.new(key_block.client_write_key, AES.MODE_CBC, key_block.client_write_IV)
             self.cipher_send = AES.new(key_block.server_write_key, AES.MODE_CBC, key_block.server_write_IV)
 
