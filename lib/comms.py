@@ -174,10 +174,11 @@ class StealthConn(object):
 
     def send(self, data):
         if self.cipher_send:
+            if self.verbose:
+                print("Original data: {}".format(data))
             data = self.pad(data)
             pre_auth_text = self.cipher_send.encrypt(data)
             if self.verbose:
-                print("Original data: {}".format(data))
                 print("Encrypted data: {}".format(repr(pre_auth_text)))
         else:
             pre_auth_text = data
