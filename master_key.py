@@ -1,4 +1,6 @@
 # for generating new key pairs
+import os
+
 from Crypto.PublicKey import RSA
 
 if __name__ == '__main__':
@@ -12,7 +14,7 @@ if __name__ == '__main__':
             f.write(key.exportKey('PEM'))
 
         print('Saving public key...')
-        with open('./lib/key_rsa.pub.pem', 'wb') as f:
+        with open(os.path.join('lib', 'key_rsa.pub.pem'), 'wb') as f:
             f.write(key.publickey().exportKey('PEM'))
 
         print('All done!')
