@@ -105,7 +105,6 @@ class HMACWithFrameCounter(object):
 
 class StealthConn(object):
     random_size = 32  # bytes
-    tag_size = 16
     block_size = 16
 
     def __init__(self, conn, client=False, server=False, verbose=False):
