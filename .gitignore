@@ -2,3 +2,4 @@
 **/__pycache__/
 /lib/key_rsa.pub.pem
 /master_key.pem
+/pastebot.net/hello.fbi.signed

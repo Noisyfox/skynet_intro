@@ -1,6 +1,5 @@
 # for generating new key pairs
 import os
-
 from Crypto.PublicKey import RSA
 
 if __name__ == '__main__':
